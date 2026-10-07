@@ -1,0 +1,93 @@
+/*
+ * Solarized Web — base layer, injected at document_start.
+ *
+ * Everything is gated on html:not([data-sz-off]) so the content script can
+ * switch it off per site. Defaults use :where() (zero specificity) so any
+ * page rule wins — and page rules are recolored by content.js anyway.
+ */
+
+@font-face {
+  font-family: 'Solarized Web Hyperlegible';
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url('chrome-extension://__MSG_@@extension_id__/fonts/AtkinsonHyperlegibleNext-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Solarized Web Hyperlegible';
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url('chrome-extension://__MSG_@@extension_id__/fonts/AtkinsonHyperlegibleNext-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* Never let the page or the OS pick a dark UA scheme. */
+html:not([data-sz-off]) {
+  color-scheme: light !important;
+}
+
+/* The browser canvas is white when a page sets no background. Top-level
+ * documents only: iframes are transparent by default and must stay so. */
+:where(html:not([data-sz-off]):not([data-sz-frame])) {
+  background-color: #fdf6e3;
+}
+:where(html:not([data-sz-off])) {
+  color: #073642;
+}
+
+/* First-paint guard until content.js has recolored the stylesheets. */
+html:not([data-sz-off]):not([data-sz-ready]):not([data-sz-frame]),
+html:not([data-sz-off]):not([data-sz-ready]):not([data-sz-frame]) > body {
+  background-color: #fdf6e3 !important;
+}
+
+/* UA defaults that are not in any page stylesheet. */
+:where(html:not([data-sz-off])) :where(input, textarea, select, option, optgroup, dialog) {
+  background-color: #fdf6e3;
+  color: #073642;
+  border-color: #93a1a1;
+}
+:where(html:not([data-sz-off])) :where(button, input[type='button'], input[type='submit'], input[type='reset'], input[type='file']::file-selector-button) {
+  background-color: #eee8d5;
+  color: #073642;
+  border-color: #93a1a1;
+}
+:where(html:not([data-sz-off])) :where(input, textarea)::placeholder {
+  color: #93a1a1;
+}
+:where(html:not([data-sz-off])) :where(a:link) {
+  color: #268bd2;
+}
+:where(html:not([data-sz-off])) :where(a:visited) {
+  color: #6c71c4;
+}
+:where(html:not([data-sz-off])) :where(mark) {
+  background-color: #f6e7b4;
+  color: #073642;
+}
+:where(html:not([data-sz-off])) :where(hr) {
+  border-color: #93a1a1;
+}
+html:not([data-sz-off]) {
+  accent-color: #268bd2;
+  scrollbar-color: #93a1a1 #eee8d5;
+}
+
+/* Option: warm and dim bright media. */
+html[data-sz-tint]:not([data-sz-off]) :is(img, video) {
+  filter: sepia(0.18) brightness(0.92) !important;
+}
+
+/* Option: canvas content (charts, Google Docs) can't be recolored through
+ * CSS, so approximate: white -> ~base3 on light pages; on dark-by-design
+ * pages invert with hue preserved so the canvas matches the inverted page. */
+html[data-sz-canvas]:not([data-sz-off]):not([data-sz-invert]) canvas {
+  filter: brightness(0.9) sepia(0.29) !important;
+}
+html[data-sz-canvas][data-sz-invert]:not([data-sz-off]) canvas {
+  filter: invert(0.9) hue-rotate(180deg) brightness(1.02) sepia(0.25) !important;
+}
+
+/* Option: Atkinson Hyperlegible is in font.css, inserted only while enabled. */

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Solarized Web</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <img src="../../icons/icon32.png" alt="" width="24" height="24">
+    <h1>Solarized Web</h1>
+  </header>
+
+  <section class="site">
+    <div class="host" id="host">—</div>
+    <label class="row big">
+      <span>Solarize this site</span>
+      <input type="checkbox" id="site" role="switch">
+    </label>
+    <p class="note" id="siteNote" hidden></p>
+  </section>
+
+  <section>
+    <div class="label">Text contrast</div>
+    <div class="seg" id="contrast" role="radiogroup">
+      <button data-v="soft" role="radio">Soft</button>
+      <button data-v="normal" role="radio">Normal</button>
+      <button data-v="high" role="radio">High</button>
+    </div>
+  </section>
+
+  <section>
+    <label class="row"><span>Turn dark sites light</span><input type="checkbox" id="invertDark" role="switch"></label>
+    <label class="row"><span>Recolor canvas (charts, Docs)</span><input type="checkbox" id="canvas" role="switch"></label>
+    <label class="row"><span>Soften images &amp; video</span><input type="checkbox" id="tintImages" role="switch"></label>
+    <label class="row"><span>Atkinson Hyperlegible font</span><input type="checkbox" id="font" role="switch"></label>
+  </section>
+
+  <section>
+    <div class="label" id="exLabel">Excluded sites</div>
+    <ul class="ex" id="exList"></ul>
+    <form class="add" id="exForm" autocomplete="off">
+      <input type="text" id="exInput" placeholder="example.com or http://127.0.0.1:*" spellcheck="false" aria-labelledby="exLabel">
+      <button type="submit">Add</button>
+    </form>
+    <p class="note" id="exError" hidden></p>
+    <p class="hint">A hostname also covers its subdomains. A URL is a prefix; <code>*</code> matches anything.</p>
+  </section>
+
+  <section>
+    <label class="row"><span>Enabled on all sites</span><input type="checkbox" id="enabled" role="switch"></label>
+  </section>
+
+  <footer>Toggle this site: <kbd>⌥</kbd><kbd>⇧</kbd><kbd>S</kbd></footer>
+  <script src="../colors.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+/*
+ * Solarized Web — Atkinson Hyperlegible option. Inserted per frame by the
+ * service worker only while the option is on: a rule matching every element
+ * costs style-recalc time on every page even when gated off by an attribute.
+ * The @font-face for the bundled fallback lives in base.css.
+ */
+body,
+body :not(pre, code, kbd, samp, tt, var, pre *, code *, i, [aria-hidden='true'], [class*='icon' i], [class*='fa-'], [class*='material' i], [class*='glyph' i], [class*='symbol' i], svg, svg *, math, math *) {
+  font-family: 'Atkinson Hyperlegible Next', 'Atkinson Hyperlegible', 'Solarized Web Hyperlegible', system-ui, sans-serif !important;
+}
+:is(pre, code, kbd, samp, tt) {
+  font-family: 'Atkinson Hyperlegible Mono', ui-monospace, 'SF Mono', Menlo, monospace !important;
+}
