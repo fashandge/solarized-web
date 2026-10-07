@@ -8,8 +8,9 @@
  */
 importScripts('colors.js');
 
-const CSS_CACHE = new Map(); // url -> Promise<string|null>
-const MAX_CACHE = 200;
+// In-flight requests only, to dedupe concurrent frames/tabs. Finished
+// responses are not kept: the HTTP cache ('default' mode) decides freshness.
+const INFLIGHT = new Map(); // url -> Promise<string|null>
 
 function absolutizeUrls(css, base) {
   return css.replace(/url\(\s*(['"]?)([^'")]*?)\1\s*\)/g, (m, q, u) => {
@@ -20,6 +21,31 @@ function absolutizeUrls(css, base) {
 
 const IMPORT_RE = /@import\s+(?:url\(\s*(['"]?)([^'")]+)\1\s*\)|(['"])([^'"]+)\3)\s*([^;]*);/g;
 
+/*
+ * Wrap inlined @import text in the import's conditions, so the rules keep
+ * their cascade layer, @supports gate and media query:
+ *   @import url(x) layer(base) supports(display: grid) screen;
+ *   -> @layer base { @supports (display: grid) { @media screen { ... } } }
+ */
+function wrapImport(text, cond) {
+  let rest = cond.trim(), layer = null, supports = null;
+  const m = /^layer\b(?:\(\s*([^)]*?)\s*\))?/i.exec(rest);
+  if (m) { layer = m[1] || ''; rest = rest.slice(m[0].length).trim(); }
+  if (/^supports\(/i.test(rest)) {
+    let depth = 0, i = 'supports'.length;
+    for (; i < rest.length; i++) {
+      if (rest[i] === '(') depth++;
+      else if (rest[i] === ')' && --depth === 0) break;
+    }
+    supports = rest.slice('supports('.length, i).trim();
+    rest = rest.slice(i + 1).trim();
+  }
+  if (rest) text = `@media ${rest} {\n${text}\n}`;
+  if (supports) text = `@supports (${supports}) {\n${text}\n}`;
+  if (layer !== null) text = `@layer ${layer} {\n${text}\n}`.replace('@layer  {', '@layer {');
+  return text;
+}
+
 async function inlineImports(css, base, depth) {
   const jobs = [];
   css.replace(IMPORT_RE, (m, _q1, u1, _q2, u2, cond) => {
@@ -28,22 +54,18 @@ async function inlineImports(css, base, depth) {
   });
   if (!jobs.length) return css;
   const texts = await Promise.all(jobs.map((j) => (depth < 4 ? fetchCss(j.url, depth + 1) : null)));
+  // An @import that can't be inlined can't be kept either: after inlined
+  // rules it would be ignored, silently dropping CSS the browser did load.
+  // Fail the whole proxy instead, leaving the original stylesheet in place.
+  if (texts.some((t) => t == null)) return null;
   jobs.forEach((j, i) => {
-    let text = texts[i];
-    if (text == null) {
-      text = `@import url("${j.url}") ${j.cond};`; // keep as-is (absolute)
-    } else {
-      // Keep only the media part of the condition; layer()/supports() are dropped.
-      const media = j.cond.replace(/layer(\([^)]*\))?|supports\([^)]*\)/g, '').trim();
-      if (media) text = `@media ${media} {\n${text}\n}`;
-    }
-    css = css.replace(j.m, () => text);
+    css = css.replace(j.m, () => wrapImport(texts[i], j.cond));
   });
   return css;
 }
 
 function fetchCss(url, depth = 0) {
-  if (CSS_CACHE.has(url)) return CSS_CACHE.get(url);
+  if (INFLIGHT.has(url)) return INFLIGHT.get(url);
   const job = (async () => {
     try {
       // No cookies, and only real stylesheets: the text ends up readable by
@@ -59,9 +81,8 @@ function fetchCss(url, depth = 0) {
       return null;
     }
   })();
-  if (CSS_CACHE.size >= MAX_CACHE) CSS_CACHE.delete(CSS_CACHE.keys().next().value);
-  CSS_CACHE.set(url, job);
-  job.then((t) => { if (t == null) CSS_CACHE.delete(url); });
+  INFLIGHT.set(url, job);
+  job.finally(() => INFLIGHT.delete(url));
   return job;
 }
 

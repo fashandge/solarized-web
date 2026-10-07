@@ -165,10 +165,24 @@
     }
   }
 
-  function processTree(root) {
+  /* `seen` (optional, per mutation batch) skips elements an earlier walk in
+   * the same batch already covered: a tree built node by node while
+   * connected yields one record per node, and walking each node's subtree
+   * again would cost nodes x depth. */
+  function processTree(root, seen) {
+    if (seen) {
+      if (seen.has(root)) return;
+      seen.add(root);
+    }
     if (root.nodeType === 1) processElement(root);
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
-    for (let el = walker.nextNode(); el; el = walker.nextNode()) processElement(el);
+    for (let el = walker.nextNode(); el; el = walker.nextNode()) {
+      if (seen) {
+        if (seen.has(el)) continue;
+        seen.add(el);
+      }
+      processElement(el);
+    }
   }
 
   function addShadowRoot(root) {
@@ -261,10 +275,14 @@
   async function proxyLink(link, sheet) {
     const href = link.href;
     if (!href || proxies.has(link)) return;
+    const gen = generation;
     let text = null;
     try {
       text = await chrome.runtime.sendMessage({ type: 'sz-fetch-css', url: href });
     } catch { /* extension reloaded or fetch failed */ }
+    // A restart while this was in flight starts its own request; only the
+    // current generation may insert, and only once.
+    if (gen !== generation || proxies.has(link)) return;
     if (!mapper || typeof text !== 'string' || !link.isConnected || link.href !== href || link.sheet !== sheet) return;
     const style = document.createElement('style');
     style.setAttribute('data-sz-proxy', href);
@@ -290,6 +308,7 @@
   function onMutations(muts) {
     if (!mapper) return;
     let sheetsDirty = false;
+    const seen = new Set();
     for (const m of muts) {
       if (m.type === 'childList') {
         const tname = m.target.localName;
@@ -299,7 +318,8 @@
           heatUp(); // CSS-in-JS inserts its rules when components mount
           const name = node.localName;
           if (name === 'style' || name === 'link') { sheetsDirty = true; continue; }
-          processTree(node);
+          if (!node.isConnected) continue; // removed again within this batch
+          processTree(node, seen);
           if (node.firstElementChild && node.querySelector('style, link')) sheetsDirty = true;
         }
         if (proxies.size) {
@@ -319,6 +339,11 @@
           if (el === docEl && !fighting(flagsRec)) setFlags();
         } else if (el.localName === 'link' || el.localName === 'style') {
           if (a === 'href' && proxies.has(el)) dropProxy(el);
+          if (a === 'media' && proxies.has(el)) {
+            const style = proxies.get(el);
+            style.media = el.media;
+            if (style.sheet) fixMedia(style.sheet.media);
+          }
           if (a !== 'color') sheetsDirty = true;
         } else if (COLOR_ATTR_SET.has(a)) {
           mapAttr(el, a);
@@ -353,6 +378,9 @@
       else if (el.matches(':defined')) undefinedCustom.delete(el);
     }
     for (const root of shadowRoots) if (!root.host.isConnected) shadowRoots.delete(root);
+    // Links inside a removed shadow tree are invisible to the removedNodes
+    // scan; a held proxy would keep that whole tree alive.
+    for (const link of [...proxies.keys()]) if (!link.isConnected) dropProxy(link);
   }
 
   const onLinkLoad = (e) => {
@@ -370,18 +398,25 @@
     return null;
   }
 
-  /* Relative luminance of what the page shows as its background *now*. */
+  /* Relative luminance of the background the page itself paints (after
+   * mapping), or null if it paints none (the browser canvas). The
+   * extension's default html background is switched off via data-sz-probe
+   * while measuring, so it can't mask a full-screen app container. */
   function pageBgLum() {
-    const body = document.body;
-    const direct = [body, docEl].map((el) => el && SC.luminance(getComputedStyle(el).backgroundColor))
-      .find((l) => l && l.alpha > 0.5);
-    if (direct) return direct.lum;
-    const W = innerWidth, H = innerHeight;
-    const lums = [[0.5, 0.5], [0.25, 0.3], [0.75, 0.3], [0.25, 0.75], [0.75, 0.75]]
-      .map(([x, y]) => bgLumAt(document.elementFromPoint(W * x, H * y)))
-      .filter((l) => l !== null)
-      .sort((p, q) => p - q);
-    return lums.length ? lums[lums.length >> 1] : 0.9;
+    docEl.setAttribute('data-sz-probe', '');
+    try {
+      const direct = [document.body, docEl].map((el) => el && SC.luminance(getComputedStyle(el).backgroundColor))
+        .find((l) => l && l.alpha > 0.5);
+      if (direct) return direct.lum;
+      const W = innerWidth, H = innerHeight;
+      const lums = [[0.5, 0.5], [0.25, 0.3], [0.75, 0.3], [0.25, 0.75], [0.75, 0.75]]
+        .map(([x, y]) => bgLumAt(document.elementFromPoint(W * x, H * y)))
+        .filter((l) => l !== null)
+        .sort((p, q) => p - q);
+      return lums.length ? lums[lums.length >> 1] : null;
+    } finally {
+      docEl.removeAttribute('data-sz-probe');
+    }
   }
 
   // The mapping is monotone, so the mapped background tells us whether the
@@ -391,7 +426,8 @@
   function checkDarkness() {
     if (retired || !mapper || !ready || !settings.invertDark || !document.body) return;
     const lum = pageBgLum();
-    const originalDark = mapper.invert ? lum > 0.35 : lum < 0.2;
+    // No background of its own: the canvas, which is white.
+    const originalDark = lum !== null && (mapper.invert ? lum > 0.35 : lum < 0.2);
     // Decide once: if the measurement is ambiguous it could flip forever.
     if (originalDark !== mapper.invert && !darkFlipped) {
       darkFlipped = true;
@@ -433,7 +469,10 @@
   let ready = false;
   let readyTimer = 0;
 
+  let generation = 0;
+
   function start() {
+    generation++;
     mapper = SC.createMapper({
       contrast: settings.contrast,
       invert: settings.invertDark && hostIsDark,
@@ -508,6 +547,9 @@
     origs = new WeakMap();
     attrOrigs = new WeakMap();
     mediaOrigs = new WeakMap();
+    // start() rediscovers live shadow roots; don't pin removed ones meanwhile.
+    shadowRoots.clear();
+    undefinedCustom.clear();
     processedRules = new WeakSet();
     sheetSigs = new WeakMap();
     blockedSheets = new WeakSet();

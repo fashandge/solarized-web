@@ -35,10 +35,21 @@ working:
   keyframes, adopted sheets, open and closed shadow roots — has its color
   properties and color-bearing custom properties remapped.
 - Cross-origin stylesheets (hidden from the CSSOM) are fetched by the
-  background worker and swapped for an identical same-origin `<style>`.
+  background worker and swapped for an identical same-origin `<style>`. Only
+  `text/css` responses are used and no cookies are sent, since the text
+  becomes readable by the page. `@import`s are inlined with their `layer()`,
+  `supports()` and media conditions; if any import can't be inlined, the
+  original stylesheet is left in place.
 - CSS-in-JS rules inserted via `insertRule` are caught by a per-frame check
-  before they paint; inline `style=""`, `bgcolor`, `<font color>` and SVG
-  `fill`/`stroke` are handled through a MutationObserver.
+  that runs for a second after elements are added (document-level sheets);
+  shadow-root sheets and anything else are caught by a 1.5 s poll. Inline
+  `style=""`, `bgcolor`, `<font color>` and SVG `fill`/`stroke` are handled
+  through a MutationObserver.
+- Idle pages cost nothing: no per-frame work without DOM insertions, and no
+  references are kept to replaced stylesheets or removed shadow trees.
+- A newer copy of the content script (after an extension reload) tells the
+  older one to restore the page and retire; a rate limit stops any
+  tug-of-war over a value at 20 rewrites per second.
 - `@media (prefers-color-scheme: dark)` is neutralized; pages that are dark by
   design are detected and inverted to light.
 - `<canvas>` (charts, Google Docs) can't be recolored, so it gets a CSS filter
@@ -53,7 +64,13 @@ colors keep their lightness and are hue-warped onto the Solarized accents.
 - Images and video are not recolored (enable "Soften images & video" to dim them).
 - Chrome's internal pages, the Web Store and the built-in PDF viewer can't be
   touched by extensions.
-- A stylesheet whose host refuses the extension's fetch stays unrecolored.
+- A cross-origin stylesheet stays unrecolored if its host refuses the
+  extension's fetch, it isn't served as `text/css`, or one of its `@import`s
+  can't be fetched.
+- A page script editing an already-recolored rule through the CSSOM isn't
+  recolored again; closed shadow roots on built-in elements (`div`) are
+  missed; CSS-in-JS rules added on a class change, with no element insertion,
+  can take up to 1.5 s to be recolored.
 
 ## Development
 

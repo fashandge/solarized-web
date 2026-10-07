@@ -30,7 +30,7 @@ html:not([data-sz-off]) {
 
 /* The browser canvas is white when a page sets no background. Top-level
  * documents only: iframes are transparent by default and must stay so. */
-:where(html:not([data-sz-off]):not([data-sz-frame])) {
+:where(html:not([data-sz-off]):not([data-sz-frame]):not([data-sz-probe])) {
   background-color: #fdf6e3;
 }
 :where(html:not([data-sz-off])) {
