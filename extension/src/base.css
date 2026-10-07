@@ -28,13 +28,51 @@ html:not([data-sz-off]) {
   color-scheme: light !important;
 }
 
-/* The browser canvas is white when a page sets no background. Top-level
- * documents only: iframes are transparent by default and must stay so. */
-:where(html:not([data-sz-off]):not([data-sz-frame]):not([data-sz-probe])) {
-  background-color: #fdf6e3;
-}
-:where(html:not([data-sz-off])) {
-  color: #073642;
+/* Defaults, in a cascade layer: an unlayered rule beats every layered rule
+ * whatever its specificity, so unlayered defaults would override sites that
+ * put their own CSS in @layer (GitHub's Primer does). Inside a layer they
+ * lose to all page CSS, layered or not, as defaults should. */
+@layer solarized-web-defaults {
+  /* The browser canvas is white when a page sets no background. Top-level
+   * documents only: iframes are transparent by default and must stay so. */
+  :where(html:not([data-sz-off]):not([data-sz-frame]):not([data-sz-probe])) {
+    background-color: #fdf6e3;
+  }
+  :where(html:not([data-sz-off])) {
+    color: #073642;
+  }
+
+  /* UA defaults that are not in any page stylesheet. */
+  :where(html:not([data-sz-off])) :where(input, textarea, select, option, optgroup, dialog) {
+    background-color: #fdf6e3;
+    color: #073642;
+    border-color: #93a1a1;
+  }
+  :where(html:not([data-sz-off])) :where(button, input[type='button'], input[type='submit'], input[type='reset'], input[type='file']::file-selector-button) {
+    background-color: #eee8d5;
+    color: #073642;
+    border-color: #93a1a1;
+  }
+  :where(html:not([data-sz-off])) :where(input, textarea)::placeholder {
+    color: #93a1a1;
+  }
+  :where(html:not([data-sz-off])) :where(a:link) {
+    color: #268bd2;
+  }
+  :where(html:not([data-sz-off])) :where(a:visited) {
+    color: #6c71c4;
+  }
+  :where(html:not([data-sz-off])) :where(mark) {
+    background-color: #f6e7b4;
+    color: #073642;
+  }
+  :where(html:not([data-sz-off])) :where(hr) {
+    border-color: #93a1a1;
+  }
+  html:not([data-sz-off]) {
+    accent-color: #268bd2;
+    scrollbar-color: #93a1a1 #eee8d5;
+  }
 }
 
 /* First-paint guard until content.js has recolored the stylesheets. */
@@ -43,37 +81,6 @@ html:not([data-sz-off]):not([data-sz-ready]):not([data-sz-frame]) > body {
   background-color: #fdf6e3 !important;
 }
 
-/* UA defaults that are not in any page stylesheet. */
-:where(html:not([data-sz-off])) :where(input, textarea, select, option, optgroup, dialog) {
-  background-color: #fdf6e3;
-  color: #073642;
-  border-color: #93a1a1;
-}
-:where(html:not([data-sz-off])) :where(button, input[type='button'], input[type='submit'], input[type='reset'], input[type='file']::file-selector-button) {
-  background-color: #eee8d5;
-  color: #073642;
-  border-color: #93a1a1;
-}
-:where(html:not([data-sz-off])) :where(input, textarea)::placeholder {
-  color: #93a1a1;
-}
-:where(html:not([data-sz-off])) :where(a:link) {
-  color: #268bd2;
-}
-:where(html:not([data-sz-off])) :where(a:visited) {
-  color: #6c71c4;
-}
-:where(html:not([data-sz-off])) :where(mark) {
-  background-color: #f6e7b4;
-  color: #073642;
-}
-:where(html:not([data-sz-off])) :where(hr) {
-  border-color: #93a1a1;
-}
-html:not([data-sz-off]) {
-  accent-color: #268bd2;
-  scrollbar-color: #93a1a1 #eee8d5;
-}
 
 /* Option: warm and dim bright media. */
 html[data-sz-tint]:not([data-sz-off]) :is(img, video) {

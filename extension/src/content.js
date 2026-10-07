@@ -426,8 +426,12 @@
   function checkDarkness() {
     if (retired || !mapper || !ready || !settings.invertDark || !document.body) return;
     const lum = pageBgLum();
-    // No background of its own: the canvas, which is white.
-    const originalDark = lum !== null && (mapper.invert ? lum > 0.35 : lum < 0.2);
+    // A page is dark if its background was darker than #777 (Y 0.184). The
+    // mapping is monotone, so compare against where #777 maps in this mode:
+    // in normal mode darker stays below it, in invert mode it ends up above.
+    // No background of its own means the canvas, which is white.
+    const t = mapper.targetLum(0.184);
+    const originalDark = lum !== null && (mapper.invert ? lum > t : lum < t);
     // Decide once: if the measurement is ambiguous it could flip forever.
     if (originalDark !== mapper.invert && !darkFlipped) {
       darkFlipped = true;

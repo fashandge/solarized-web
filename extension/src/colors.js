@@ -1,15 +1,17 @@
 /*
  * Solarized Web — color mapping.
  *
- * Maps any CSS color onto the Solarized Light palette while preserving the
- * page's relative lightness ordering (so text stays readable on its
- * background):
- *   - Neutral colors are tone-mapped by OKLab lightness onto a ramp of
- *     Solarized base tones (white -> base3, black -> base02 by default).
- *   - Chromatic colors keep their mapped lightness but snap their hue to the
- *     nearest Solarized accent, with chroma capped at that accent's chroma.
- *   - In "invert" mode (used for pages that are dark by design) lightness is
- *     flipped first, so a dark page also becomes Solarized *Light*.
+ * Maps any CSS color onto the Solarized Light palette while preserving how
+ * readable the page made it:
+ *   - Every color keeps its WCAG contrast against the background (white ->
+ *     base3), up to a knee set by the contrast option; beyond it contrast is
+ *     compressed so black lands on base02 (Normal). Secondary gray text stays
+ *     as readable as the site designed it.
+ *   - Neutrals take the Solarized base-tone tint at their lightness.
+ *   - Chromatic colors keep that luminance but have their hue warped onto
+ *     the Solarized accents, with chroma capped at the accent's chroma.
+ *   - In "invert" mode (pages that are dark by design) contrast is measured
+ *     against a dark background, so a dark page also becomes Solarized Light.
  *
  * Classic script: defines globalThis.SolarizedColor for the content script
  * and popup, and module.exports for the Node tests.
@@ -200,18 +202,57 @@
   const mixLab = (p, q, t) => [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t, p[2] + (q[2] - p[2]) * t];
   const smoothstep = (e0, e1, x) => { const t = clamp01((x - e0) / (e1 - e0)); return t * t * (3 - 2 * t); };
 
-  /* Input-lightness anchors -> Solarized tone. Light half is fixed; the dark
-   * half depends on the contrast setting. */
-  function rampFor(contrast) {
-    const P = PALETTE;
-    const dark = {
-      soft: [[0.55, P.base0], [0.40, P.base00], [0, P.base01]],
-      normal: [[0.55, P.base00], [0.40, P.base01], [0, P.base02]],
-      high: [[0.55, P.base01], [0.40, '#30525c'], [0, P.base03]],
-    }[contrast] || null;
-    return [[1, P.base3], [0.93, P.base2], [0.70, P.base1], ...(dark || [])]
-      .map(([at, hex]) => ({ at, lab: labOf(hex) }));
+  /* Relative luminance (WCAG) of an OKLab color. */
+  const lumOf = ([L, a, b]) => {
+    const [r, g, bl] = oklabToLinear(L, a, b);
+    return 0.2126 * clamp01(r) + 0.7152 * clamp01(g) + 0.0722 * clamp01(bl);
+  };
+  const Y_BG = lumOf(labOf(PALETTE.base3));
+  const contrastOnBg = (Y) => (Y_BG + 0.05) / (Y + 0.05);
+
+  /* Solarized base tones, light to dark: a mapped neutral takes the tint
+   * (a, b) interpolated between them at its OKLab lightness. */
+  const TONES = ['base3', 'base2', 'base1', 'base0', 'base00', 'base01', 'base02', 'base03']
+    .map((k) => labOf(PALETTE[k])).sort((p, q) => q[0] - p[0]);
+  function toneLab(L) {
+    if (L >= TONES[0][0]) return [L, TONES[0][1], TONES[0][2]];
+    for (let i = 0; i < TONES.length - 1; i++) {
+      const hi = TONES[i], lo = TONES[i + 1];
+      if (L >= lo[0]) {
+        const t = (L - lo[0]) / (hi[0] - lo[0]);
+        return [L, lo[1] + (hi[1] - lo[1]) * t, lo[2] + (hi[2] - lo[2]) * t];
+      }
+    }
+    const last = TONES[TONES.length - 1];
+    return [L, last[1], last[2]];
   }
+
+  /* The lightness at which shape(L) has relative luminance Y. 14 halvings
+   * (L within 6e-5) are below one 8-bit step. */
+  function solveL(Y, shape) {
+    let lo = 0, hi = 1;
+    for (let i = 0; i < 14; i++) {
+      const m = (lo + hi) / 2;
+      if (lumOf(shape(m)) < Y) lo = m; else hi = m;
+    }
+    return (lo + hi) / 2;
+  }
+
+  /*
+   * Contrast settings. A color's contrast against the page background is
+   * kept as is up to `knee` (so secondary gray text stays as readable as the
+   * site made it). Above it contrast is compressed log-linearly so pure black
+   * lands exactly on `darkest`: every ratio between two dark colors shrinks by
+   * the same power, so dark headers, their dropdowns and borders stay apart.
+   */
+  const CONTRAST = {
+    soft: { knee: 3, darkest: 'base01' },
+    normal: { knee: 6, darkest: 'base02' },
+    high: { knee: 8, darkest: 'base03' },
+  };
+  // Invert mode: the darkest common dark-theme background (#0d0d0d-ish), so
+  // slightly lighter dark cards stay a shade apart from the page.
+  const Y_DARK_REF = 0.004;
 
   /*
    * Hue warp: the hue of each sRGB primary/secondary is pinned to the hue of
@@ -245,27 +286,43 @@
   function createMapper(options = {}) {
     const contrast = ['soft', 'normal', 'high'].includes(options.contrast) ? options.contrast : 'normal';
     const invert = !!options.invert;
-    const ramp = rampFor(contrast);
+    const { knee, darkest } = CONTRAST[contrast];
+    const cMax = contrastOnBg(lumOf(labOf(PALETTE[darkest])));
+    const cTopIn = invert ? 1.05 / (Y_DARK_REF + 0.05) : 21;
+    const squeeze = Math.log(cMax / knee) / Math.log(cTopIn / knee);
     const cache = new Map();
 
-    function neutral(x) {
-      for (let i = 0; i < ramp.length - 1; i++) {
-        const hi = ramp[i], lo = ramp[i + 1];
-        if (x >= lo.at) return mixLab(lo.lab, hi.lab, (x - lo.at) / (hi.at - lo.at));
+    /* Insertion-ordered Map as a cheap LRU-ish cache: drop the oldest quarter
+     * when full, rather than everything (a full clear thrashes on pages with
+     * more distinct colors than the cap). */
+    function remember(key, val) {
+      if (cache.size >= 20000) {
+        let n = 5000;
+        for (const k of cache.keys()) { cache.delete(k); if (--n === 0) break; }
       }
-      return ramp[ramp.length - 1].lab;
+      cache.set(key, val);
     }
 
-    function mapLab([L, a, b]) {
-      // Dark-by-design pages: their background (L ~0.15-0.25) must land on base3.
-      const x = invert ? clamp01((1 - L) / 0.82) : clamp01(L);
-      const N = neutral(x);
+    /* Luminance the mapped color should have on base3. */
+    function targetLum(Y) {
+      // Contrast against the background the color was designed for: white,
+      // or for dark-by-design pages, a dark background.
+      const c0 = invert ? Math.max(1, (Y + 0.05) / (Y_DARK_REF + 0.05)) : 1.05 / (Y + 0.05);
+      const c = c0 > knee ? knee * Math.exp(Math.log(c0 / knee) * squeeze) : c0;
+      return Math.max(0, (Y_BG + 0.05) / c - 0.05);
+    }
+
+    function mapLab(lab) {
+      const Yt = targetLum(lumOf(lab));
+      const N = toneLab(solveL(Yt, toneLab));
+      const [, a, b] = lab;
       const C = Math.hypot(a, b);
       const w = smoothstep(0.02, 0.07, C);
       if (w === 0) return N;
       const acc = warpHue(Math.atan2(b, a));
       const Ct = Math.min(C, acc.C);
-      return mixLab(N, [N[0], Ct * Math.cos(acc.h), Ct * Math.sin(acc.h)], w);
+      const chromaShape = (L) => [L, Ct * Math.cos(acc.h), Ct * Math.sin(acc.h)];
+      return mixLab(N, chromaShape(solveL(Yt, chromaShape)), w);
     }
 
     /* Map one color token; returns the token unchanged if it isn't a color. */
@@ -274,8 +331,7 @@
       if (out !== undefined) return out;
       const parsed = parseColor(token);
       out = parsed ? formatRgb(oklabToRgb(...mapLab(parsed.lab)), parsed.alpha, parsed.alphaExpr) : token;
-      if (cache.size > 20000) cache.clear();
-      cache.set(token, out);
+      remember(token, out);
       return out;
     }
 
@@ -296,6 +352,13 @@
      * own format; everything else goes through mapValue.
      */
     function mapCustomProperty(value, name = '') {
+      const key = (NON_COLOR_NAME.test(name) ? '\u0001n' : '\u0001c') + value;
+      let out = cache.get(key);
+      if (out === undefined) remember(key, (out = mapCustomPropertyUncached(value, name)));
+      return out;
+    }
+
+    function mapCustomPropertyUncached(value, name) {
       const t = value.trim();
       let m = /^(\d{1,3})(\s*,\s*|\s+)(\d{1,3})\2(\d{1,3})$/.exec(t);
       if (m && !NON_COLOR_NAME.test(name)) {
@@ -314,7 +377,9 @@
       return mapValue(value);
     }
 
-    return { mapColor, mapValue, mapCustomProperty, contrast, invert };
+    // targetLum is exported for dark-page detection, which compares measured
+    // (mapped) luminance against the mapped value of a reference gray.
+    return { mapColor, mapValue, mapCustomProperty, targetLum, contrast, invert };
   }
 
   function rgbToHsl(r, g, b) {

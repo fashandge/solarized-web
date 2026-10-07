@@ -24,6 +24,42 @@ test('lightness order of grays is preserved', () => {
   for (let i = 1; i < out.length; i++) assert.ok(out[i] < out[i - 1], `${grays[i]} darker than ${grays[i - 1]}`);
 });
 
+test('contrast is preserved up to the knee, compressed above it', () => {
+  const m = S.createMapper({ contrast: 'normal' });
+  const cr = (fg, bg) => { const a = lum(fg), b = lum(bg); return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05); };
+  for (const g of ['#59636e', '#767676', '#999', '#0969da']) {
+    assert.ok(Math.abs(cr(m.mapColor(g), '#fdf6e3') - cr(g, '#fff')) < 0.25, g); // secondary text keeps its contrast
+  }
+  assert.ok(cr(m.mapColor('#1f2328'), '#fdf6e3') < cr('#1f2328', '#fff')); // near-black is softened
+});
+
+test('every contrast setting keeps a fine gray ramp strictly ordered and distinct', () => {
+  const ramp = [];
+  for (let v = 0; v <= 255; v += 0x11) ramp.push('#' + v.toString(16).padStart(2, '0').repeat(3));
+  for (const contrast of ['soft', 'normal', 'high']) {
+    const m = S.createMapper({ contrast });
+    const out = ramp.map((g) => m.mapColor(g));
+    assert.equal(new Set(out).size, out.length, `${contrast}: distinct outputs`);
+    for (let i = 1; i < out.length; i++) assert.ok(lum(out[i]) > lum(out[i - 1]), `${contrast}: ${ramp[i]} lighter than ${ramp[i - 1]}`);
+  }
+});
+
+test('dark UI pairs stay distinguishable (Bootstrap navbar-dark vs dropdown-menu-dark)', () => {
+  const m = S.createMapper({ contrast: 'normal' });
+  const cr = (p, q) => { const a = lum(p), b = lum(q); return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05); };
+  assert.ok(cr(m.mapColor('#212529'), m.mapColor('#343a40')) > 1.1);
+  assert.ok(cr(m.mapColor('#000'), m.mapColor('#333')) > 1.3);
+});
+
+test('invert mode preserves contrast of dark-theme text against the page', () => {
+  const m = S.createMapper({ invert: true });
+  const cr = (p, q) => { const a = lum(p), b = lum(q); return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05); };
+  // GitHub dark muted text on its page background, before and after.
+  const before = cr('#9198a1', '#0d1117');
+  const after = cr(m.mapColor('#9198a1'), m.mapColor('#0d1117'));
+  assert.ok(Math.abs(after - before) < 0.6, `${before} -> ${after}`);
+});
+
 test('invert mode turns dark page backgrounds light and light text dark', () => {
   const m = S.createMapper({ invert: true });
   assert.ok(lum(m.mapColor('#121212')) > 0.85);

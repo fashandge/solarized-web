@@ -55,9 +55,17 @@ working:
 - `<canvas>` (charts, Google Docs) can't be recolored, so it gets a CSS filter
   that pulls white toward base3.
 
-`extension/src/colors.js` does the mapping in OKLab: neutrals are tone-mapped
-onto the Solarized base ramp (order preserved, so contrast survives), chromatic
-colors keep their lightness and are hue-warped onto the Solarized accents.
+`extension/src/colors.js` does the mapping in OKLab, preserving readability:
+every color keeps its contrast against the background (white → base3) up to a
+knee set by the contrast option, so secondary gray text stays as readable as
+the site made it; above the knee contrast is compressed so black lands on
+base02 (Normal). Neutrals take the Solarized base-tone tint; chromatic colors
+keep their luminance and are hue-warped onto the Solarized accents.
+
+The extension's own defaults (link color, form controls, page background) sit
+in a CSS cascade layer, so they lose to all page CSS — including sites like
+GitHub that put their styles in `@layer`, which would otherwise lose to any
+unlayered rule.
 
 ## Limitations
 
