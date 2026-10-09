@@ -389,7 +389,14 @@
 
   /* ---------------- dark-page detection ---------------- */
 
+  // Embedded content paints its own pixels; its CSS background (a dark
+  // tweet embed's, say) says nothing about the page.
+  const EMBEDDED = new Set(['iframe', 'frame', 'embed', 'object', 'img', 'picture', 'video', 'canvas', 'svg']);
+
+  /* Background luminance behind a point's element, or null if nothing up to
+   * the root paints one (the page canvas shows through). */
   function bgLumAt(el) {
+    while (el && EMBEDDED.has(el.localName)) el = el.parentElement;
     for (; el; el = el.parentElement) {
       const c = getComputedStyle(el).backgroundColor;
       const l = SC.luminance(c);
@@ -399,7 +406,7 @@
   }
 
   /* Relative luminance of the background the page itself paints (after
-   * mapping), or null if it paints none (the browser canvas). The
+   * mapping); where it paints none, the browser canvas (white). The
    * extension's default html background is switched off via data-sz-probe
    * while measuring, so it can't mask a full-screen app container. */
   function pageBgLum() {
@@ -408,12 +415,16 @@
       const direct = [document.body, docEl].map((el) => el && SC.luminance(getComputedStyle(el).backgroundColor))
         .find((l) => l && l.alpha > 0.5);
       if (direct) return direct.lum;
+      // A sample showing the canvas counts as the canvas (white, mapped),
+      // not as missing: dropping it let two hits on one dark embed outvote
+      // a mostly blank light page.
+      const canvas = mapper.targetLum(1);
       const W = innerWidth, H = innerHeight;
       const lums = [[0.5, 0.5], [0.25, 0.3], [0.75, 0.3], [0.25, 0.75], [0.75, 0.75]]
         .map(([x, y]) => bgLumAt(document.elementFromPoint(W * x, H * y)))
-        .filter((l) => l !== null)
+        .map((l) => (l === null ? canvas : l))
         .sort((p, q) => p - q);
-      return lums.length ? lums[lums.length >> 1] : null;
+      return lums[lums.length >> 1];
     } finally {
       docEl.removeAttribute('data-sz-probe');
     }
@@ -429,14 +440,16 @@
     // A page is dark if its background was darker than #777 (Y 0.184). The
     // mapping is monotone, so compare against where #777 maps in this mode:
     // in normal mode darker stays below it, in invert mode it ends up above.
-    // No background of its own means the canvas, which is white.
     const t = mapper.targetLum(0.184);
-    const originalDark = lum !== null && (mapper.invert ? lum > t : lum < t);
+    const originalDark = mapper.invert ? lum > t : lum < t;
     // Decide once: if the measurement is ambiguous it could flip forever.
     if (originalDark !== mapper.invert && !darkFlipped) {
       darkFlipped = true;
       hostIsDark = originalDark;
-      (originalDark ? chrome.storage.local.set({ [DARK_KEY]: true }) : chrome.storage.local.remove(DARK_KEY)).catch(() => {});
+      // Only the top frame speaks for the host: iframes on the same host
+      // (ad frames written with document.write inherit the page's URL) would
+      // otherwise overwrite its verdict and mis-theme the next page load.
+      if (!isFrame) (originalDark ? chrome.storage.local.set({ [DARK_KEY]: true }) : chrome.storage.local.remove(DARK_KEY)).catch(() => {});
       restart();
     }
   }
