@@ -55,7 +55,9 @@ working:
   background, else the median of five sampled points (embeds skipped, bare
   canvas counted as white), and the verdict is remembered per host. Frames
   without a host of their own (`about:blank` ad slots) or on the page's host
-  follow the top page's verdict, overridden only by their own background.
+  ask their own tab's top page for its verdict (via the service worker, so
+  other tabs on the host can't interfere), overridden only by their own
+  background.
 - `<canvas>` (charts, Google Docs) can't be recolored, so it gets a CSS filter
   that pulls white toward base3.
 

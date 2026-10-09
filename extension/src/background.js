@@ -92,6 +92,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     fetchCss(msg.url).then(sendResponse);
     return true;
   }
+  // Dark-page verdicts: frames ask their tab's top frame; when it flips it
+  // tells the tab's frames to ask again.
+  if (msg.type === 'sz-top-dark-changed' && sender.frameId === 0) {
+    chrome.tabs.sendMessage(sender.tab.id, { type: 'sz-top-dark-changed' }).catch(() => {});
+    return false;
+  }
+  if (msg.type === 'sz-top-dark-get') {
+    chrome.tabs.sendMessage(sender.tab.id, { type: 'sz-top-dark-get' }, { frameId: 0 })
+      .then(sendResponse, () => sendResponse(undefined));
+    return true;
+  }
   if (msg.type === 'sz-font-css') {
     const details = { target: { tabId: sender.tab.id, frameIds: [sender.frameId] }, files: ['src/font.css'] };
     (msg.on ? chrome.scripting.insertCSS(details) : chrome.scripting.removeCSS(details)).catch(() => {});

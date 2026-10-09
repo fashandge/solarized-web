@@ -397,13 +397,14 @@
   /* ---------------- dark-page detection ---------------- */
 
   // Embedded content paints its own pixels; its CSS background (a dark
-  // tweet embed's, say) says nothing about the page.
-  const EMBEDDED = new Set(['iframe', 'frame', 'embed', 'object', 'img', 'picture', 'video', 'canvas', 'svg']);
+  // tweet embed's, an <svg>'s) says nothing about the page. A hit inside an
+  // SVG lands on a <rect> or <path>, so climb out of the whole SVG tree.
+  const EMBEDDED = new Set(['iframe', 'frame', 'embed', 'object', 'img', 'picture', 'video', 'canvas']);
 
   /* Background luminance behind a point's element, or null if nothing up to
    * the root paints one (the page canvas shows through). */
   function bgLumAt(el) {
-    while (el && EMBEDDED.has(el.localName)) el = el.parentElement;
+    while (el && (EMBEDDED.has(el.localName) || el instanceof SVGElement)) el = el.parentElement;
     for (; el; el = el.parentElement) {
       const c = getComputedStyle(el).backgroundColor;
       const l = SC.luminance(c);
@@ -441,7 +442,10 @@
   // The mapping is monotone, so the mapped background tells us whether the
   // original was dark: in normal mode it stays dark, in invert mode it is light.
   let darkFlipped = false;
-  let darkHeard = false; // the storage listener has delivered the top page's verdict
+  let darkSeeded = false; // hostIsDark holds the stored verdict, not the default
+  let darkSeq = 0;         // top frame: bumped on each flip
+  let topSeq = -1;         // following frame: newest top verdict adopted
+  const darkAsks = [];     // top frame: queries that arrived before the seed
 
   function checkDarkness() {
     if (darkFlipped || retired || !mapper || !ready || !settings.invertDark || !document.body) return;
@@ -460,6 +464,10 @@
       darkFlipped = true;
       hostIsDark = originalDark;
       if (ownsDarkKey) (originalDark ? chrome.storage.local.set({ [DARK_KEY]: true }) : chrome.storage.local.remove(DARK_KEY)).catch(() => {});
+      if (!isFrame) {
+        darkSeq++;
+        try { chrome.runtime.sendMessage({ type: 'sz-top-dark-changed' }).catch(() => {}); } catch { /* orphaned */ }
+      }
       restart();
     }
   }
@@ -622,27 +630,56 @@
     chrome.storage.sync.get(SC.DEFAULT_SETTINGS),
     chrome.storage.local.get(DARK_KEY),
   ]).then(([s, l]) => {
-    // A verdict the storage listener delivered meanwhile is newer.
-    if (!darkHeard) hostIsDark = !!l[DARK_KEY];
+    // A verdict the top page answered meanwhile is newer.
+    if (topSeq < 0) hostIsDark = !!l[DARK_KEY];
+    seedDone();
     applySettings(s);
+    // The stored verdict is host-wide, so another tab may have changed it
+    // since this tab's top page decided: ask the top page itself.
+    if (!ownsDarkKey) askTopDark();
     // SPAs often paint their real background after load.
     window.addEventListener('load', () => setTimeout(checkDarkness, 300), { once: true });
     setTimeout(checkDarkness, 2500);
-  }).catch(() => applySettings({}));
+  }).catch(() => { seedDone(); applySettings({}); });
+
+  /* Frames that don't own their key follow this tab's top page, asking it
+   * through the service worker (the host-wide storage key also changes when
+   * another tab on the host decides). When the top page flips it only tells
+   * the tab's frames to ask again, so every verdict comes from the tab's
+   * current top document, never a stale one from before a navigation.
+   * Adopting a verdict re-runs the frame's own background check. */
+  function askTopDark() {
+    try {
+      chrome.runtime.sendMessage({ type: 'sz-top-dark-get' })
+        .then((r) => { if (r && typeof r.dark === 'boolean') adoptTopDark(r.dark, r.seq); }).catch(() => {});
+    } catch { /* orphaned */ }
+  }
+
+  function seedDone() {
+    darkSeeded = true;
+    for (const reply of darkAsks.splice(0)) reply({ dark: hostIsDark, seq: darkSeq });
+  }
+
+  function adoptTopDark(dark, seq) {
+    if (retired || typeof seq !== 'number' || seq < topSeq) return;
+    topSeq = seq;
+    if (dark === hostIsDark) return;
+    hostIsDark = dark;
+    darkFlipped = false;
+    if (mapper && settings.invertDark) restart();
+  }
+
+  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (!msg || retired) return false;
+    if (msg.type === 'sz-top-dark-changed' && !ownsDarkKey) askTopDark();
+    else if (msg.type === 'sz-top-dark-get' && !isFrame) {
+      if (darkSeeded) sendResponse({ dark: hostIsDark, seq: darkSeq });
+      else { darkAsks.push(sendResponse); return true; } // answered by seedDone()
+    }
+    return false;
+  });
 
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'local') {
-      // Follow the top page's verdict when it is decided after this frame
-      // started (first visit to a dark site), then re-check our own background.
-      if (ownsDarkKey || retired || !(DARK_KEY in changes)) return;
-      const dark = !!changes[DARK_KEY].newValue;
-      darkHeard = true;
-      if (dark === hostIsDark) return;
-      hostIsDark = dark;
-      darkFlipped = false;
-      if (mapper && settings.invertDark) restart();
-      return;
-    }
     if (area !== 'sync') return;
     chrome.storage.sync.get(SC.DEFAULT_SETTINGS).then(applySettings);
   });
