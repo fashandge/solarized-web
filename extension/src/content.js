@@ -40,7 +40,14 @@
     const anc = location.ancestorOrigins;
     return anc && anc.length ? anc[anc.length - 1] + '/' : location.href;
   };
-  const frameHost = location.hostname || (() => { try { return new URL(topUrl()).hostname; } catch { return ''; } })();
+  const topHost = (() => { try { return new URL(topUrl()).hostname; } catch { return ''; } })();
+  const frameHost = location.hostname || topHost;
+  // A frame stores its own dark verdict only under its own, different host.
+  // about:blank / srcdoc / document.write frames (most ad slots) have no
+  // host and same-host frames share the top page's key: they follow the
+  // top page's verdict unless their own background says otherwise, and
+  // never write it.
+  const ownsDarkKey = !isFrame || (!!location.hostname && location.hostname !== topHost);
 
   const COLOR_PROP = /(?:^|-)color$|^(?:fill|stroke|box-shadow|text-shadow|background-image)$/;
   const COLOR_ATTRS = ['bgcolor', 'color', 'text', 'link', 'vlink', 'alink', 'fill', 'stroke', 'stop-color'];
@@ -409,12 +416,13 @@
    * mapping); where it paints none, the browser canvas (white). The
    * extension's default html background is switched off via data-sz-probe
    * while measuring, so it can't mask a full-screen app container. */
-  function pageBgLum() {
+  function pageBgLum(directOnly) {
     docEl.setAttribute('data-sz-probe', '');
     try {
       const direct = [document.body, docEl].map((el) => el && SC.luminance(getComputedStyle(el).backgroundColor))
         .find((l) => l && l.alpha > 0.5);
       if (direct) return direct.lum;
+      if (directOnly) return null;
       // A sample showing the canvas counts as the canvas (white, mapped),
       // not as missing: dropping it let two hits on one dark embed outvote
       // a mostly blank light page.
@@ -433,23 +441,25 @@
   // The mapping is monotone, so the mapped background tells us whether the
   // original was dark: in normal mode it stays dark, in invert mode it is light.
   let darkFlipped = false;
+  let darkHeard = false; // the storage listener has delivered the top page's verdict
 
   function checkDarkness() {
-    if (retired || !mapper || !ready || !settings.invertDark || !document.body) return;
-    const lum = pageBgLum();
+    if (darkFlipped || retired || !mapper || !ready || !settings.invertDark || !document.body) return;
+    // Frames that don't own their key skip the sampling fallback: it forces
+    // a layout, of the top page too in a same-process frame. Painting no
+    // background, they show the page behind them and follow its verdict.
+    const lum = pageBgLum(!ownsDarkKey);
+    if (lum === null) return;
     // A page is dark if its background was darker than #777 (Y 0.184). The
     // mapping is monotone, so compare against where #777 maps in this mode:
     // in normal mode darker stays below it, in invert mode it ends up above.
     const t = mapper.targetLum(0.184);
     const originalDark = mapper.invert ? lum > t : lum < t;
     // Decide once: if the measurement is ambiguous it could flip forever.
-    if (originalDark !== mapper.invert && !darkFlipped) {
+    if (originalDark !== mapper.invert) {
       darkFlipped = true;
       hostIsDark = originalDark;
-      // Only the top frame speaks for the host: iframes on the same host
-      // (ad frames written with document.write inherit the page's URL) would
-      // otherwise overwrite its verdict and mis-theme the next page load.
-      if (!isFrame) (originalDark ? chrome.storage.local.set({ [DARK_KEY]: true }) : chrome.storage.local.remove(DARK_KEY)).catch(() => {});
+      if (ownsDarkKey) (originalDark ? chrome.storage.local.set({ [DARK_KEY]: true }) : chrome.storage.local.remove(DARK_KEY)).catch(() => {});
       restart();
     }
   }
@@ -612,7 +622,8 @@
     chrome.storage.sync.get(SC.DEFAULT_SETTINGS),
     chrome.storage.local.get(DARK_KEY),
   ]).then(([s, l]) => {
-    hostIsDark = !!l[DARK_KEY];
+    // A verdict the storage listener delivered meanwhile is newer.
+    if (!darkHeard) hostIsDark = !!l[DARK_KEY];
     applySettings(s);
     // SPAs often paint their real background after load.
     window.addEventListener('load', () => setTimeout(checkDarkness, 300), { once: true });
@@ -620,6 +631,18 @@
   }).catch(() => applySettings({}));
 
   chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local') {
+      // Follow the top page's verdict when it is decided after this frame
+      // started (first visit to a dark site), then re-check our own background.
+      if (ownsDarkKey || retired || !(DARK_KEY in changes)) return;
+      const dark = !!changes[DARK_KEY].newValue;
+      darkHeard = true;
+      if (dark === hostIsDark) return;
+      hostIsDark = dark;
+      darkFlipped = false;
+      if (mapper && settings.invertDark) restart();
+      return;
+    }
     if (area !== 'sync') return;
     chrome.storage.sync.get(SC.DEFAULT_SETTINGS).then(applySettings);
   });

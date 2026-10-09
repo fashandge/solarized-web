@@ -51,7 +51,11 @@ working:
   older one to restore the page and retire; a rate limit stops any
   tug-of-war over a value at 20 rewrites per second.
 - `@media (prefers-color-scheme: dark)` is neutralized; pages that are dark by
-  design are detected and inverted to light.
+  design are detected and inverted to light. Detection reads the `body`/`html`
+  background, else the median of five sampled points (embeds skipped, bare
+  canvas counted as white), and the verdict is remembered per host. Frames
+  without a host of their own (`about:blank` ad slots) or on the page's host
+  follow the top page's verdict, overridden only by their own background.
 - `<canvas>` (charts, Google Docs) can't be recolored, so it gets a CSS filter
   that pulls white toward base3.
 
