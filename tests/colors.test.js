@@ -127,3 +127,17 @@ test('pattern forms: hostnames cover subdomains, URL prefixes stop at a boundary
   assert.ok(!S.patternMatches('https://a.dev/docs/', 'https://a.dev/blog'));
   assert.ok(!S.patternMatches('', 'https://a.dev/'));
 });
+
+test('blue text is desaturated and darkened; other text hues and blue backgrounds are not', () => {
+  const m = S.createMapper({ contrast: 'normal' });
+  const cr = (fg) => (lum('#fdf6e3') + 0.05) / (lum(fg) + 0.05);
+  for (const c of ['#0000ff', '#3366cc', '#1a0dab']) {
+    assert.ok(cr(m.mapColor(c, true)) >= 8.9, c);
+    const [, a, b] = S.parseColor(m.mapColor(c, true)).lab;
+    assert.ok(Math.hypot(a, b) <= 0.075, `${c} chroma`);
+  }
+  for (const c of ['#008000', '#ff0000', '#999', '#0000ff']) {
+    if (c !== '#0000ff') assert.equal(m.mapColor(c, true), m.mapColor(c), c);
+  }
+  assert.notEqual(m.mapColor('#0000ff'), m.mapColor('#0000ff', true));
+});

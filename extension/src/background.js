@@ -86,6 +86,9 @@ function fetchCss(url, depth = 0) {
   return job;
 }
 
+// Stylesheets a frame switches on and off (see setSheet in content.js).
+const SWITCHED_CSS = ['src/font.css', 'src/cjk.css'];
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || sender.id !== chrome.runtime.id || !sender.tab) return false;
   if (msg.type === 'sz-fetch-css' && typeof msg.url === 'string' && /^https?:/i.test(msg.url)) {
@@ -103,8 +106,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .then(sendResponse, () => sendResponse(undefined));
     return true;
   }
-  if (msg.type === 'sz-font-css') {
-    const details = { target: { tabId: sender.tab.id, frameIds: [sender.frameId] }, files: ['src/font.css'] };
+  if (msg.type === 'sz-css' && SWITCHED_CSS.includes(msg.file)) {
+    const details = { target: { tabId: sender.tab.id, frameIds: [sender.frameId] }, files: [msg.file] };
     (msg.on ? chrome.scripting.insertCSS(details) : chrome.scripting.removeCSS(details)).catch(() => {});
   }
   return false;

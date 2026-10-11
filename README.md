@@ -66,7 +66,17 @@ every color keeps its contrast against the background (white → base3) up to a
 knee set by the contrast option, so secondary gray text stays as readable as
 the site made it; above the knee contrast is compressed so black lands on
 base02 (Normal). Neutrals take the Solarized base-tone tint; chromatic colors
-keep their luminance and are hue-warped onto the Solarized accents.
+keep their luminance and are hue-warped onto the Solarized accents. Blue and
+violet *text* is the exception: a myopic eye focuses short wavelengths
+furthest in front of the retina, so saturated blue text blurs most. Text
+colors in that hue range are desaturated and darkened to at least 9:1 (6:1
+Soft, 10:1 High).
+
+`extension/src/cjk.css`, inserted while the extension is active on a site,
+redefines Windows-era Chinese font names (SimSun/宋体, SimHei, Microsoft
+YaHei, STHeiti, PMingLiU…) for CJK code points as the platform's modern UI
+font — PingFang on macOS, where those names otherwise fall back to the thin
+old STHeiti.
 
 The extension's own defaults (link color, form controls, page background) sit
 in a CSS cascade layer, so they lose to all page CSS — including sites like

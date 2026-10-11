@@ -246,9 +246,9 @@
    * the same power, so dark headers, their dropdowns and borders stay apart.
    */
   const CONTRAST = {
-    soft: { knee: 3, darkest: 'base01' },
-    normal: { knee: 6, darkest: 'base02' },
-    high: { knee: 8, darkest: 'base03' },
+    soft: { knee: 3, darkest: 'base01', textFloor: 6 },
+    normal: { knee: 6, darkest: 'base02', textFloor: 9 },
+    high: { knee: 8, darkest: 'base03', textFloor: 10 },
   };
   // Invert mode: the darkest common dark-theme background (#0d0d0d-ish), so
   // slightly lighter dark cards stay a shade apart from the page.
@@ -283,10 +283,18 @@
     return { h, C: 0.12 };
   }
 
+  /* 1 for a (warped) hue between Solarized blue and violet, fading to 0
+   * by cyan and magenta. */
+  const TEXT_BLUE_C = 0.07;
+  function blueness(h) {
+    const x = deg(h);
+    return smoothstep(205, 230, x) * (1 - smoothstep(295, 320, x));
+  }
+
   function createMapper(options = {}) {
     const contrast = ['soft', 'normal', 'high'].includes(options.contrast) ? options.contrast : 'normal';
     const invert = !!options.invert;
-    const { knee, darkest } = CONTRAST[contrast];
+    const { knee, darkest, textFloor } = CONTRAST[contrast];
     const cMax = contrastOnBg(lumOf(labOf(PALETTE[darkest])));
     const cTopIn = invert ? 1.05 / (Y_DARK_REF + 0.05) : 21;
     const squeeze = Math.log(cMax / knee) / Math.log(cTopIn / knee);
@@ -303,35 +311,49 @@
       cache.set(key, val);
     }
 
-    /* Luminance the mapped color should have on base3. */
-    function targetLum(Y) {
+    /* Luminance the mapped color should have on base3. `floor` is a minimum
+     * contrast (text colors). */
+    function targetLum(Y, floor = 1) {
       // Contrast against the background the color was designed for: white,
       // or for dark-by-design pages, a dark background.
       const c0 = invert ? Math.max(1, (Y + 0.05) / (Y_DARK_REF + 0.05)) : 1.05 / (Y + 0.05);
-      const c = c0 > knee ? knee * Math.exp(Math.log(c0 / knee) * squeeze) : c0;
+      const c = Math.max(floor, c0 > knee ? knee * Math.exp(Math.log(c0 / knee) * squeeze) : c0);
       return Math.max(0, (Y_BG + 0.05) / c - 0.05);
     }
 
-    function mapLab(lab) {
-      const Yt = targetLum(lumOf(lab));
-      const N = toneLab(solveL(Yt, toneLab));
+    /*
+     * Blue text (`text`): for a myopic eye short wavelengths focus furthest in
+     * front of the retina, so saturated blue text blurs more than any other
+     * hue at the same contrast. Blue and violet text colors are therefore
+     * desaturated toward the base tones (chroma capped at TEXT_BLUE_C) and
+     * given at least `textFloor` contrast. Other hues, and all backgrounds
+     * and borders, keep the regular mapping.
+     */
+    function mapLab(lab, text) {
       const [, a, b] = lab;
       const C = Math.hypot(a, b);
       const w = smoothstep(0.02, 0.07, C);
+      const acc = w ? warpHue(Math.atan2(b, a)) : null;
+      const bw = text && w ? blueness(acc.h) : 0;
+      const Yn = targetLum(lumOf(lab));
+      const Yt = bw ? Yn + (Math.min(Yn, targetLum(lumOf(lab), textFloor)) - Yn) * bw : Yn;
+      const N = toneLab(solveL(Yt, toneLab));
       if (w === 0) return N;
-      const acc = warpHue(Math.atan2(b, a));
-      const Ct = Math.min(C, acc.C);
+      const Cmax = acc.C + (Math.min(acc.C, TEXT_BLUE_C) - acc.C) * bw;
+      const Ct = Math.min(C, Cmax);
       const chromaShape = (L) => [L, Ct * Math.cos(acc.h), Ct * Math.sin(acc.h)];
       return mixLab(N, chromaShape(solveL(Yt, chromaShape)), w);
     }
 
-    /* Map one color token; returns the token unchanged if it isn't a color. */
-    function mapColor(token) {
-      let out = cache.get(token);
+    /* Map one color token; returns the token unchanged if it isn't a color.
+     * `text`: the color is a text color (see mapLab). */
+    function mapColor(token, text = false) {
+      const key = text ? '\u0002' + token : token;
+      let out = cache.get(key);
       if (out !== undefined) return out;
       const parsed = parseColor(token);
-      out = parsed ? formatRgb(oklabToRgb(...mapLab(parsed.lab)), parsed.alpha, parsed.alphaExpr) : token;
-      remember(token, out);
+      out = parsed ? formatRgb(oklabToRgb(...mapLab(parsed.lab, text)), parsed.alpha, parsed.alphaExpr) : token;
+      remember(key, out);
       return out;
     }
 
@@ -339,9 +361,9 @@
     const TOKEN_RE = /url\([^)]*\)|#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?|oklch|oklab)\((?:[^()]|\([^()]*\))*\)|(?<![\w-])[a-zA-Z]+(?![\w(-])/g;
 
     /* Map every color inside an arbitrary property value (gradients, shadows...). */
-    function mapValue(value) {
+    function mapValue(value, text = false) {
       if (!value) return value;
-      return value.replace(TOKEN_RE, (tok) => (tok.startsWith('url(') ? tok : mapColor(tok)));
+      return value.replace(TOKEN_RE, (tok) => (tok.startsWith('url(') ? tok : mapColor(tok, text)));
     }
 
     const NON_COLOR_NAME = /size|width|height|space|gap|margin|padding|radius|index|duration|delay|weight|col|row|grid|font|line|opacity|scale|offset|inset|position|translate|rotate|time|count|ratio|z-/i;

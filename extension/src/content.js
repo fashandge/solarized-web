@@ -50,6 +50,7 @@
   const ownsDarkKey = !isFrame || (!!location.hostname && location.hostname !== topHost);
 
   const COLOR_PROP = /(?:^|-)color$|^(?:fill|stroke|box-shadow|text-shadow|background-image)$/;
+  const TEXT_PROP = /^(?:color|-webkit-text-fill-color|-webkit-text-stroke-color|text-decoration-color|caret-color)$/;
   const COLOR_ATTRS = ['bgcolor', 'color', 'text', 'link', 'vlink', 'alink', 'fill', 'stroke', 'stop-color'];
   const COLOR_ATTR_SET = new Set(COLOR_ATTRS);
   const OBSERVE = {
@@ -112,7 +113,7 @@
       let nv;
       if (p.startsWith('--')) nv = mapper.mapCustomProperty(v, p);
       else if (p === 'background-image') nv = v.includes('gradient') ? mapper.mapValue(v) : v;
-      else nv = mapper.mapValue(v);
+      else nv = mapper.mapValue(v, TEXT_PROP.test(p));
       if (nv === v) continue;
       const prio = decl.getPropertyPriority(p);
       decl.setProperty(p, nv, prio);
@@ -140,8 +141,9 @@
     if (rec && rec.val === v) return;
     if (rec && fighting(rec)) return;
     if (name === 'color' && el.localName !== 'font' && el.localName !== 'basefont') return;
-    let nv = mapper.mapValue(v);
-    if (nv === v && /^[0-9a-f]{6}$/i.test(v)) nv = mapper.mapColor('#' + v); // legacy bgcolor="ffffff"
+    const text = name === 'color' || name === 'text' || name.endsWith('link');
+    let nv = mapper.mapValue(v, text);
+    if (nv === v && /^[0-9a-f]{6}$/i.test(v)) nv = mapper.mapColor('#' + v, text); // legacy bgcolor="ffffff"
     if (nv === v) return;
     el.setAttribute(name, nv);
     if (!mine) attrOrigs.set(el, (mine = new Map()));
@@ -488,17 +490,19 @@
     for (const [k, on] of Object.entries(want)) {
       if (on !== docEl.hasAttribute(k)) on ? docEl.setAttribute(k, '') : docEl.removeAttribute(k);
     }
-    setFontCss(want['data-sz-font']);
+    setSheet('src/font.css', want['data-sz-font']);
+    setSheet('src/cjk.css', !!mapper);
   }
 
-  // The font rule must match every element, and Chrome evaluates such a rule
-  // on every style recalc even when its html[...] gate is false, so it is
-  // only inserted (by the service worker) while the option is on.
-  let fontCssOn = false;
-  function setFontCss(on) {
-    if (on === fontCssOn) return;
-    fontCssOn = on;
-    try { chrome.runtime.sendMessage({ type: 'sz-font-css', on }).catch(() => {}); } catch { /* orphaned */ }
+  // Stylesheets inserted by the service worker only while needed: the font
+  // rule must match every element, and Chrome evaluates such a rule on every
+  // style recalc even when its html[...] gate is false; cjk.css holds
+  // @font-face rules, which no attribute can gate.
+  const sheetsOn = new Set();
+  function setSheet(file, on) {
+    if (on === sheetsOn.has(file)) return;
+    on ? sheetsOn.add(file) : sheetsOn.delete(file);
+    try { chrome.runtime.sendMessage({ type: 'sz-css', file, on }).catch(() => {}); } catch { /* orphaned */ }
   }
 
   let ready = false;
